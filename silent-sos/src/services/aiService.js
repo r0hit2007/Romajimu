@@ -1,40 +1,64 @@
-import { OpenAI } from 'openai';
+// AI Service — uses native fetch() instead of the openai npm package.
+// The openai SDK relies on Node.js built-ins that Metro cannot bundle.
+// The HuggingFace router is a standard OpenAI-compatible REST API,
+// so a plain fetch() call is all we need.
 
 // ⚠️  NEVER commit real tokens to source control.
-// Set HF_TOKEN in your .env file (see README → Environment Setup).
-// For Expo: use expo-constants + app.config.js extra, or a secrets manager.
-const HF_TOKEN = process.env.HF_TOKEN || 'REPLACE_WITH_YOUR_HF_TOKEN';
+// Set your token via expo-constants (see app.config.js) or replace inline for local dev.
+import Constants from 'expo-constants';
+
+const HF_TOKEN =
+  Constants.expoConfig?.extra?.HF_TOKEN ||
+  process.env.HF_TOKEN ||
+  'REPLACE_WITH_YOUR_HF_TOKEN';
+
 const MODEL = 'google/gemma-4-31B-it:novita';
+const BASE_URL = 'https://router.huggingface.co/v1';
 
-let client = null;
+/**
+ * Core chat completion via HuggingFace OpenAI-compatible router.
+ * @param {Array} messages - Array of {role, content} objects
+ * @param {number} maxTokens
+ * @returns {Promise<string|null>}
+ */
+const chatCompletion = async (messages, maxTokens = 300) => {
+  const response = await fetch(`${BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${HF_TOKEN}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      max_tokens: maxTokens,
+      temperature: 0.7,
+    }),
+  });
 
-const getClient = () => {
-  if (!client) {
-    client = new OpenAI({
-      baseURL: 'https://router.huggingface.co/v1',
-      apiKey: HF_TOKEN,
-      dangerouslyAllowBrowser: true,
-    });
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`HF API error ${response.status}: ${err}`);
   }
-  return client;
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content?.trim() ?? null;
 };
 
 /**
  * Draft a discreet SOS help message using Gemma.
  * @param {Object} opts
- * @param {string} opts.currentMessage - The user's current SOS message
+ * @param {string} opts.currentMessage
  * @param {boolean} opts.includeLocation
  * @param {boolean} opts.includeAudio
- * @returns {Promise<string>} - AI-drafted message
+ * @returns {Promise<string|null>}
  */
 export const draftSOSMessage = async ({ currentMessage, includeLocation, includeAudio }) => {
   try {
-    const ai = getClient();
-    const systemPrompt = `You are a compassionate safety assistant helping someone in a dangerous situation craft a discreet emergency message. 
+    const systemPrompt = `You are a compassionate safety assistant helping someone in a dangerous situation craft a discreet emergency message.
 The message must:
-- Be clear and informative for emergency responders without being alarming if seen by an abuser
-- Sound like a casual message on the surface
-- Include a subtle signal that help is needed
+- Be clear and informative for emergency contacts without being alarming if seen by an abuser
+- Sound casual on the surface while signalling distress
 - Be under 160 characters (SMS limit)
 - NOT use the words "help", "emergency", "abuse", "danger" or "SOS"
 - Feel natural and personal
@@ -44,12 +68,8 @@ Additional context: ${includeLocation ? 'Location will be shared.' : ''} ${inclu
 
 Provide ONLY the refined message text, no explanation.`;
 
-    const response = await ai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'user', content: systemPrompt }],
-    });
-
-    return response.choices[0]?.message?.content?.trim() || currentMessage;
+    const result = await chatCompletion([{ role: 'user', content: systemPrompt }], 200);
+    return result || null;
   } catch (err) {
     console.warn('AI draft failed:', err.message);
     return null;
@@ -59,33 +79,33 @@ Provide ONLY the refined message text, no explanation.`;
 /**
  * Fetch and categorize support resources for a given region using Gemma.
  * @param {string} region - e.g., "US", "UK", "IN"
- * @returns {Promise<Array>} - Array of resource objects
+ * @returns {Promise<Array|null>}
  */
 export const fetchSupportResources = async (region) => {
+  const regionName =
+    region === 'IN' ? 'India' :
+    region === 'UK' ? 'United Kingdom' :
+    region === 'CA' ? 'Canada' :
+    region === 'AU' ? 'Australia' : 'United States';
+
   try {
-    const ai = getClient();
-    const prompt = `List 6 real, verified domestic abuse support resources for ${region === 'IN' ? 'India' : region === 'UK' ? 'United Kingdom' : region === 'CA' ? 'Canada' : region === 'AU' ? 'Australia' : 'United States'}.
+    const prompt = `List 6 real, verified domestic abuse support resources for ${regionName}.
 
 For each resource provide:
 - name (organization name)
-- phone (hotline number)
+- phone (hotline number with country code)
 - description (1 sentence, what they offer)
 - type (one of: hotline, shelter, legal, counseling, online)
 
-Return ONLY a valid JSON array. Example format:
+Return ONLY a valid JSON array with no markdown, no explanation. Example:
 [{"name":"...","phone":"...","description":"...","type":"hotline"}]`;
 
-    const response = await ai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const result = await chatCompletion([{ role: 'user', content: prompt }], 600);
+    if (!result) return null;
 
-    const content = response.choices[0]?.message?.content?.trim();
-    // Extract JSON from the response
-    const match = content?.match(/\[[\s\S]*\]/);
-    if (match) {
-      return JSON.parse(match[0]);
-    }
+    // Extract the JSON array from the response
+    const match = result.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]);
     return null;
   } catch (err) {
     console.warn('AI resources failed:', err.message);
