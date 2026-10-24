@@ -1,0 +1,108 @@
+// Prisma Schema for Silent SOS Production Backend
+// Database Provider: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String             @id @default(uuid())
+  name          String
+  email         String             @unique
+  password_hash String
+  created_at    DateTime           @default(now())
+  updated_at    DateTime           @updatedAt
+
+  contacts      EmergencyContact[]
+  settings      SosSettings?
+  sos_history   SosHistory[]
+  sessions      UserSession[]
+
+  @@map("users")
+}
+
+model EmergencyContact {
+  id             String   @id @default(uuid())
+  user_id        String
+  name           String
+  phone          String
+  relationship   String?  @default("Other")
+  is_sos_enabled Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  user           User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("emergency_contacts")
+}
+
+model SosSettings {
+  id               String   @id @default(uuid())
+  user_id          String   @unique
+  countdown        Int      @default(5)
+  practice_mode    Boolean  @default(false)
+  custom_message   String?
+  region           String   @default("US")
+  include_location Boolean  @default(true)
+  include_audio    Boolean  @default(false)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("sos_settings")
+}
+
+model SosHistory {
+  id              String   @id @default(uuid())
+  user_id         String
+  timestamp       DateTime @default(now())
+  latitude        Float?
+  longitude       Float?
+  message         String
+  trigger_method  String   @default("manual") // "shake", "calculator", "manual"
+  status          String   @default("sent")   // "sent", "cancelled", "practice", "failed"
+  recipient_count Int      @default(0)
+  created_at      DateTime @default(now())
+
+  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([timestamp])
+  @@map("sos_history")
+}
+
+model SupportResource {
+  id          String   @id @default(uuid())
+  name        String
+  phone       String
+  description String
+  type        String   @default("hotline") // "hotline", "shelter", "legal", "counseling", "online"
+  region      String   @default("US")      // "US", "UK", "IN", "CA", "AU"
+  is_verified Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  @@index([region])
+  @@map("support_resources")
+}
+
+model UserSession {
+  id            String   @id @default(uuid())
+  user_id       String
+  refresh_token String   @unique
+  ip_address    String?
+  user_agent    String?
+  expires_at    DateTime
+  created_at    DateTime @default(now())
+
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("user_sessions")
+}

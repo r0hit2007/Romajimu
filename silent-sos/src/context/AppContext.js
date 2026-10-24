@@ -1,12 +1,21 @@
+/**
+ * @file AppContext.js
+ * @description Centralized state management for Silent SOS mobile application.
+ * Manages authentication, user profile, emergency contacts, SOS configuration,
+ * and hardware decoy settings with PostgreSQL backend synchronization and offline fallback.
+ */
+
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { getItem, setItem, removeItem, STORAGE_KEYS } from '../utils/storageService';
+import apiService from '../services/apiService';
 
 /**
- * Default initial settings for Silent SOS application.
+ * Factory default settings for first-time app launch.
  */
 const defaultSettings = {
-  // Auth state
+  // Auth
   isAuthenticated: false,
+  userId: null,
   userName: '',
   userEmail: '',
 
@@ -17,49 +26,73 @@ const defaultSettings = {
   requestCallback: false,
   countdownDuration: 5,
 
-  // Trusted Contacts list
+  // Trusted Contacts
   contacts: [],
 
-  // Discretion & Feature Flags
+  // App Features
   calculatorDecoyEnabled: false,
   launchIntoDecoy: false,
   selectedRegion: 'US',
 
-  // Onboarding state
+  // Onboarding
   onboardingComplete: false,
   practiceMode: false,
 };
 
 const AppContext = createContext(null);
 
-/**
- * AppProvider Component
- *
- * Manages global application state including authentication, user profile,
- * emergency contacts, stealth settings, and active SOS lifecycle.
- * Optimized with useCallback and useMemo to prevent unnecessary re-renders.
- */
 export const AppProvider = ({ children }) => {
   const [settings, setSettings] = useState(defaultSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [sosActive, setSosActive] = useState(false);
   const [sosStatus, setSosStatus] = useState({
-    sms: 'idle',    // idle | pending | sent | failed
-    location: 'idle',
-    audio: 'idle',
+    sms: 'idle',      // idle | pending | sent | failed
+    location: 'idle', // idle | pending | sent | failed
+    audio: 'idle',    // idle | pending | sent | failed
   });
 
-  /**
-   * Load stored settings upon initial mount using robust storageService.
-   */
+  // ─── Initial State Loading from Cache & Backend ────────────
   useEffect(() => {
     let isMounted = true;
 
     const loadSettings = async () => {
       try {
+        // 1. Load local cache first for instant UI response
         const stored = await getItem(STORAGE_KEYS.SETTINGS, null);
         if (stored && isMounted && typeof stored === 'object') {
           setSettings(prev => ({ ...prev, ...stored }));
+        }
+
+        // 2. Fetch fresh user session and synced data from backend if authenticated
+        await apiService.initToken();
+        if (apiService.token && isMounted) {
+          try {
+            const profileRes = await apiService.auth.getMe();
+            if (profileRes.data && isMounted) {
+              const serverUser = profileRes.data;
+              const updated = {
+                ...settings,
+                ...(stored || {}),
+                isAuthenticated: true,
+                userId: serverUser.id,
+                userName: serverUser.name,
+                userEmail: serverUser.email,
+                contacts: serverUser.contacts?.length > 0 ? serverUser.contacts : (stored?.contacts || []),
+                countdownDuration: serverUser.settings?.countdown || stored?.countdownDuration || 5,
+                sosMessage: serverUser.settings?.custom_message || stored?.sosMessage || defaultSettings.sosMessage,
+                selectedRegion: serverUser.settings?.region || stored?.selectedRegion || 'US',
+                includeLocation: serverUser.settings?.include_location ?? stored?.includeLocation ?? true,
+                includeAudio: serverUser.settings?.include_audio ?? stored?.includeAudio ?? false,
+              };
+              setSettings(updated);
+              await setItem(STORAGE_KEYS.SETTINGS, updated);
+
+              // Background sync any queued offline emergency alerts to PostgreSQL
+              apiService.sos.syncOfflineQueue().catch(() => {});
+            }
+          } catch (netErr) {
+            console.warn('[AppContext] Offline or backend unreachable, using cached session:', netErr.message);
+          }
         }
       } catch (e) {
         console.warn('[AppContext] Failed to load settings:', e);
@@ -79,10 +112,7 @@ export const AppProvider = ({ children }) => {
 
   /**
    * Atomically save settings updates to React state and persist.
-   * Uses functional state updates to eliminate stale closure race conditions.
-   *
-   * @param {Object} updates - Key-value map of settings to update.
-   * @returns {Promise<boolean>} True if successfully persisted.
+   * Syncs changes to backend if authenticated.
    */
   const saveSettings = useCallback(async (updates) => {
     try {
@@ -92,6 +122,19 @@ export const AppProvider = ({ children }) => {
         return mergedSettings;
       });
       await setItem(STORAGE_KEYS.SETTINGS, mergedSettings);
+
+      // Sync settings with backend if authenticated
+      if (mergedSettings.isAuthenticated && (updates.countdownDuration !== undefined || updates.sosMessage !== undefined || updates.selectedRegion !== undefined)) {
+        apiService.sos.updateSettings({
+          countdown: mergedSettings.countdownDuration,
+          custom_message: mergedSettings.sosMessage,
+          region: mergedSettings.selectedRegion,
+          include_location: mergedSettings.includeLocation,
+          include_audio: mergedSettings.includeAudio,
+          practice_mode: mergedSettings.practiceMode,
+        }).catch(() => {});
+      }
+
       return true;
     } catch (e) {
       console.warn('[AppContext] Failed to save settings:', e);
@@ -100,12 +143,7 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   /**
-   * Log into the application with email and password.
-   *
-   * @param {string} email - User email address.
-   * @param {string} password - User password.
-   * @param {string} [name=''] - Optional user display name.
-   * @returns {Promise<{success: boolean, error?: string}>}
+   * Log into the application with email and password via backend.
    */
   const login = useCallback(async (email, password, name = '') => {
     const trimmedEmail = (email || '').trim().toLowerCase();
@@ -124,26 +162,47 @@ export const AppProvider = ({ children }) => {
       return { success: false, error: 'Password must be at least 6 characters long.' };
     }
 
-    const displayName = name.trim() || trimmedEmail.split('@')[0];
-    const success = await saveSettings({
-      isAuthenticated: true,
-      userEmail: trimmedEmail,
-      userName: displayName,
-    });
+    try {
+      const data = await apiService.auth.login({ email: trimmedEmail, password });
+      const serverUser = data.user;
 
-    if (success) {
+      // Fetch fresh contacts from backend
+      let contacts = [];
+      try {
+        contacts = await apiService.contacts.getContacts();
+      } catch {
+        contacts = settings.contacts || [];
+      }
+
+      const updated = {
+        ...settings,
+        isAuthenticated: true,
+        userId: serverUser.id,
+        userEmail: serverUser.email,
+        userName: serverUser.name || name || trimmedEmail.split('@')[0],
+        contacts: contacts.length > 0 ? contacts : settings.contacts,
+        countdownDuration: serverUser.settings?.countdown || settings.countdownDuration,
+        sosMessage: serverUser.settings?.custom_message || settings.sosMessage,
+        selectedRegion: serverUser.settings?.region || settings.selectedRegion,
+      };
+
+      await saveSettings(updated);
       return { success: true };
+    } catch (err) {
+      console.warn('[AppContext] Backend login error:', err.message);
+      // Offline fallback login check if previously authenticated
+      if (settings.userEmail === trimmedEmail && settings.isAuthenticated) {
+        return { success: true, offline: true };
+      }
+      return {
+        success: false,
+        error: err.message || 'Login failed. Please check your credentials or connection.',
+      };
     }
-    return { success: false, error: 'An unexpected storage error occurred. Please try again.' };
-  }, [saveSettings]);
+  }, [saveSettings, settings]);
 
   /**
-   * Register a new user account.
-   *
-   * @param {string} name - User's full name.
-   * @param {string} email - User's email address.
-   * @param {string} password - User's password.
-   * @returns {Promise<{success: boolean, error?: string}>}
+   * Register a new user account with production backend.
    */
   const signup = useCallback(async (name, email, password) => {
     const trimmedName = (name || '').trim();
@@ -160,24 +219,32 @@ export const AppProvider = ({ children }) => {
       return { success: false, error: 'Password must be at least 6 characters long.' };
     }
 
-    const success = await saveSettings({
-      isAuthenticated: true,
-      userEmail: trimmedEmail,
-      userName: trimmedName,
-      onboardingComplete: false,
-    });
+    try {
+      const data = await apiService.auth.signup({ name: trimmedName, email: trimmedEmail, password });
+      const serverUser = data.user;
 
-    if (success) {
+      const updated = {
+        ...settings,
+        isAuthenticated: true,
+        userId: serverUser.id,
+        userEmail: serverUser.email,
+        userName: serverUser.name || trimmedName,
+        onboardingComplete: false,
+      };
+
+      await saveSettings(updated);
       return { success: true };
+    } catch (err) {
+      console.warn('[AppContext] Backend signup error:', err.message);
+      return {
+        success: false,
+        error: err.message || 'Registration failed. Please try again.',
+      };
     }
-    return { success: false, error: 'Failed to create account. Please try again.' };
-  }, [saveSettings]);
+  }, [saveSettings, settings]);
 
   /**
-   * Send password reset email link (demo flow).
-   *
-   * @param {string} email - User email address.
-   * @returns {Promise<{success: boolean, error?: string, message?: string}>}
+   * Send password reset request.
    */
   const resetPassword = useCallback(async (email) => {
     const trimmedEmail = (email || '').trim().toLowerCase();
@@ -190,18 +257,31 @@ export const AppProvider = ({ children }) => {
       return { success: false, error: 'Please enter a valid email address.' };
     }
 
-    await new Promise(resolve => setTimeout(resolve, 600));
-    return {
-      success: true,
-      message: `Password reset link has been dispatched to ${trimmedEmail}.`,
-    };
+    try {
+      await apiService.auth.forgotPassword({ email: trimmedEmail, newPassword: 'ResetPassword_' + Math.random().toString(36).slice(2, 8) });
+      return {
+        success: true,
+        message: `Password reset instructions have been dispatched to ${trimmedEmail}.`,
+      };
+    } catch {
+      return {
+        success: true,
+        message: `If an account exists for ${trimmedEmail}, reset instructions have been sent.`,
+      };
+    }
+  }, []);
+
+  const forgotPassword = useCallback(async (email, newPassword) => {
+    try {
+      const res = await apiService.auth.forgotPassword({ email, newPassword });
+      return { success: true, message: res.message };
+    } catch (err) {
+      return { success: false, error: err.message || 'Password reset request failed.' };
+    }
   }, []);
 
   /**
    * Complete onboarding and save all configuration in a single atomic update.
-   *
-   * @param {Object} onboardingData - User chosen settings during onboarding.
-   * @returns {Promise<boolean>}
    */
   const completeOnboarding = useCallback(async (onboardingData = {}) => {
     return await saveSettings({
@@ -214,7 +294,8 @@ export const AppProvider = ({ children }) => {
    * Log out of current session.
    */
   const logout = useCallback(async () => {
-    await saveSettings({ isAuthenticated: false });
+    await apiService.auth.logout();
+    await saveSettings({ isAuthenticated: false, userId: null });
   }, [saveSettings]);
 
   /**
@@ -222,6 +303,7 @@ export const AppProvider = ({ children }) => {
    */
   const deleteAccount = useCallback(async () => {
     try {
+      await apiService.auth.logout();
       await removeItem(STORAGE_KEYS.SETTINGS);
       setSettings(defaultSettings);
       return true;
@@ -230,25 +312,47 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
-  /**
-   * Add a new emergency contact.
-   */
+  // ── Contact CRUD with Backend Integration & Local Fallback ─────
   const addContact = useCallback(async (contact) => {
-    const newId = contact.id || `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let createdContact = null;
+    try {
+      const res = await apiService.contacts.addContact({
+        name: contact.name,
+        phone: contact.phone,
+        relationship: contact.relationship || 'Other',
+        is_sos_enabled: contact.is_sos_enabled ?? contact.selectedForSOS ?? true,
+      });
+      createdContact = res.data;
+    } catch (e) {
+      console.warn('[AppContext] Backend addContact failed, caching locally:', e.message);
+    }
+
+    const newContact = createdContact || {
+      ...contact,
+      id: contact.id || `local_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: Date.now(),
+      selectedForSOS: contact.is_sos_enabled ?? contact.selectedForSOS ?? true,
+    };
+
     let updated;
     setSettings(prev => {
       const currentList = Array.isArray(prev.contacts) ? prev.contacts : [];
-      updated = [...currentList, { ...contact, id: newId, createdAt: contact.createdAt || Date.now(), selectedForSOS: contact.selectedForSOS ?? true }];
+      updated = [...currentList, newContact];
       return { ...prev, contacts: updated };
     });
     await setItem(STORAGE_KEYS.SETTINGS, { ...settings, contacts: updated });
-    return newId;
+    return newContact.id;
   }, [settings]);
 
-  /**
-   * Update an existing emergency contact.
-   */
   const updateContact = useCallback(async (id, updates) => {
+    try {
+      if (id && !String(id).startsWith('local_')) {
+        await apiService.contacts.updateContact(id, updates);
+      }
+    } catch (e) {
+      console.warn('[AppContext] Backend updateContact failed, saving locally:', e.message);
+    }
+
     let updated;
     setSettings(prev => {
       const currentList = Array.isArray(prev.contacts) ? prev.contacts : [];
@@ -259,10 +363,15 @@ export const AppProvider = ({ children }) => {
     return updated;
   }, [settings]);
 
-  /**
-   * Delete an emergency contact by ID.
-   */
   const deleteContact = useCallback(async (id) => {
+    try {
+      if (id && !String(id).startsWith('local_')) {
+        await apiService.contacts.deleteContact(id);
+      }
+    } catch (e) {
+      console.warn('[AppContext] Backend deleteContact failed, removing locally:', e.message);
+    }
+
     let updated;
     setSettings(prev => {
       const currentList = Array.isArray(prev.contacts) ? prev.contacts : [];
@@ -273,15 +382,27 @@ export const AppProvider = ({ children }) => {
     return updated;
   }, [settings]);
 
-  /**
-   * Toggle SOS alert inclusion for a contact.
-   */
   const toggleContactSOS = useCallback(async (id) => {
+    try {
+      if (id && !String(id).startsWith('local_')) {
+        await apiService.contacts.toggleSos(id);
+      }
+    } catch (e) {
+      console.warn('[AppContext] Backend toggleSos failed, toggling locally:', e.message);
+    }
+
     let updated;
     setSettings(prev => {
       const currentList = Array.isArray(prev.contacts) ? prev.contacts : [];
       updated = currentList.map(c =>
-        c.id === id ? { ...c, selectedForSOS: !c.selectedForSOS, updatedAt: Date.now() } : c
+        c.id === id
+          ? {
+              ...c,
+              selectedForSOS: !(c.selectedForSOS ?? c.is_sos_enabled),
+              is_sos_enabled: !(c.selectedForSOS ?? c.is_sos_enabled),
+              updatedAt: Date.now(),
+            }
+          : c
       );
       return { ...prev, contacts: updated };
     });
@@ -309,6 +430,7 @@ export const AppProvider = ({ children }) => {
     login,
     signup,
     resetPassword,
+    forgotPassword,
     completeOnboarding,
     logout,
     deleteAccount,
@@ -326,6 +448,7 @@ export const AppProvider = ({ children }) => {
     login,
     signup,
     resetPassword,
+    forgotPassword,
     completeOnboarding,
     logout,
     deleteAccount,
@@ -342,12 +465,6 @@ export const AppProvider = ({ children }) => {
   );
 };
 
-/**
- * Custom hook to access application context.
- *
- * @throws {Error} if used outside AppProvider.
- * @returns {Object} Application context methods and state.
- */
 export const useApp = () => {
   const ctx = useContext(AppContext);
   if (!ctx) {

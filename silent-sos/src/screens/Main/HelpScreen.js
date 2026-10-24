@@ -10,12 +10,12 @@ import { useShake } from '../../context/ShakeContext';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/UIElements';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS, SHADOWS } from '../../constants/theme';
-import { sendSOSMessages, getSOSLocation, startSOSAudio, stopSOSAudio } from '../../services/sosService';
+import { sendSOSMessages, getSOSLocation, startSOSAudio, stopSOSAudio, executeEmergencyWorkflow } from '../../services/sosService';
 
 const { width } = Dimensions.get('window');
 const BUTTON_SIZE = Math.min(width * 0.65, 260);
 
-export default function HelpScreen() {
+export default function HelpScreen({ route }) {
   const { settings, setSosActive, sosStatus, setSosStatus, resetSosStatus } = useApp();
   const { shakeStatus } = useShake();
 
@@ -236,7 +236,7 @@ export default function HelpScreen() {
     triggerSOS();
   };
 
-  // ── Trigger SOS Dispatch ─────────────────────────────────
+  // ── Trigger SOS Dispatch (Automated Workflow) ─────────────
   const triggerSOS = async () => {
     setPhase('sending');
     stopRadarAnimation();
@@ -246,56 +246,43 @@ export default function HelpScreen() {
     Vibration.vibrate([0, 220, 100, 220, 100, 300]);
 
     const pm = practiceMode;
-    setSosStatus({ sms: 'pending', location: 'idle', audio: 'idle' });
+    const triggerSource = route?.params?.triggerSource || (shakeTriggered ? 'shake' : 'manual');
+
+    setSosStatus({ sms: 'pending', location: 'pending', audio: 'idle' });
 
     let message = settings?.sosMessage || 'I need help. Please contact me immediately.';
     if (settings?.requestCallback) message += ' Please call me back right away.';
 
-    // Safe contacts resolution
     const contacts = Array.isArray(settings?.contacts) ? settings.contacts : [];
 
-    // 1. Parallel Task: Location Acquisition
-    let locationTask = Promise.resolve(null);
-    if (settings?.includeLocation) {
-      setSosStatus(s => ({ ...s, location: 'pending' }));
-      locationTask = getSOSLocation(pm).then(locResult => {
-        if (locResult && locResult.success) {
-          message += `\n\n📍 My Live GPS Location:\n${locResult.mapsLink}`;
-          setSosStatus(s => ({ ...s, location: 'sent' }));
-        } else {
-          setSosStatus(s => ({ ...s, location: 'failed' }));
-        }
-        return locResult;
-      }).catch(() => {
-        setSosStatus(s => ({ ...s, location: 'failed' }));
-      });
-    }
-
-    // 2. Parallel Task: Audio Recording
-    let audioTask = Promise.resolve(null);
-    if (settings?.includeAudio) {
-      setSosStatus(s => ({ ...s, audio: 'pending' }));
-      audioTask = startSOSAudio(pm).then(audioResult => {
-        setSosStatus(s => ({ ...s, audio: audioResult && audioResult.success ? 'sent' : 'failed' }));
-      }).catch(() => {
-        setSosStatus(s => ({ ...s, audio: 'failed' }));
-      });
-    }
-
-    // Await location with quick timeout before sending SMS payload
-    await Promise.race([locationTask, new Promise(r => setTimeout(r, 2500))]);
-
-    // 3. Dispatch SMS
-    setSosStatus(s => ({ ...s, sms: 'pending' }));
     try {
-      const smsResult = await sendSOSMessages(contacts, message, pm);
-      setSosStatus(s => ({ ...s, sms: smsResult && smsResult.success ? 'sent' : 'failed' }));
-    } catch {
-      setSosStatus(s => ({ ...s, sms: 'failed' }));
-    }
+      const result = await executeEmergencyWorkflow({
+        contacts,
+        customMessage: message,
+        triggerSource,
+        practiceMode: pm,
+        includeLocation: settings?.includeLocation ?? true,
+        includeAudio: settings?.includeAudio ?? false,
+        onProgress: (statusMsg) => {
+          if (statusMsg.includes('GPS')) {
+            setSosStatus((s) => ({ ...s, location: 'pending' }));
+          } else if (statusMsg.includes('SMS')) {
+            setSosStatus((s) => ({ ...s, location: 'sent', sms: 'pending' }));
+          } else if (statusMsg.includes('cloud')) {
+            setSosStatus((s) => ({ ...s, sms: 'sent' }));
+          }
+        },
+      });
 
-    // Ensure audio completes setup in background
-    await audioTask;
+      setSosStatus({
+        sms: result.smsResult?.success ? 'sent' : 'failed',
+        location: result.location?.success ? 'sent' : 'failed',
+        audio: settings?.includeAudio ? 'sent' : 'idle',
+      });
+    } catch (err) {
+      console.warn('Emergency workflow error:', err);
+      setSosStatus({ sms: 'failed', location: 'failed', audio: 'failed' });
+    }
 
     if (isMounted.current) {
       setPhase('sent');

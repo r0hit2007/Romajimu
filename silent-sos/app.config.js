@@ -55,6 +55,7 @@ export default {
     // Extra values accessible via expo-constants inside the app
     extra: {
       HF_TOKEN: process.env.HF_TOKEN ?? null,
+      API_URL: process.env.API_URL ?? null,
     },
   },
 };

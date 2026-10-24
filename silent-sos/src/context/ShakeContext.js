@@ -57,7 +57,10 @@ export const ShakeProvider = ({ children, navigationRef }) => {
     // Navigate smoothly to Help screen
     if (navigationRef?.current?.isReady()) {
       try {
-        navigationRef.current.navigate('MainApp', { screen: 'Help' });
+        navigationRef.current.navigate('MainApp', {
+          screen: 'Help',
+          params: { triggerSource: 'shake' },
+        });
       } catch (err) {
         console.warn('ShakeProvider: Navigation failed —', err.message);
       }

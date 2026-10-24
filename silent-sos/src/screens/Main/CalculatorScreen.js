@@ -250,7 +250,10 @@ export default function CalculatorScreen({ navigation }) {
 
     Animated.timing(revealAnim, { toValue: 1, duration: 320, useNativeDriver: true }).start(() => {
       setTimeout(() => {
-        navigation.navigate('MainApp');
+        navigation.navigate('MainApp', {
+          screen: 'Help',
+          params: { triggerSource: 'calculator' },
+        });
         revealAnim.setValue(0);
       }, 350);
     });
