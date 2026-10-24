@@ -1,6 +1,9 @@
 import { OpenAI } from 'openai';
 
-const HF_TOKEN = 'REPLACE_WITH_YOUR_HF_TOKEN';
+// ⚠️  NEVER commit real tokens to source control.
+// Set HF_TOKEN in your .env file (see README → Environment Setup).
+// For Expo: use expo-constants + app.config.js extra, or a secrets manager.
+const HF_TOKEN = process.env.HF_TOKEN || 'REPLACE_WITH_YOUR_HF_TOKEN';
 const MODEL = 'google/gemma-4-31B-it:novita';
 
 let client = null;
