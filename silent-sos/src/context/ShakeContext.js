@@ -110,11 +110,20 @@ export const ShakeProvider = ({ children, navigationRef }) => {
     }
   }, [cooldown, triggerSOS]);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback(async () => {
     stopListening();
-    Accelerometer.setUpdateInterval(ACCELEROMETER_INTERVAL);
-    subscription.current = Accelerometer.addListener(handleAccelerometer);
-    setIsActive(true);
+    try {
+      const isAvailable = await Accelerometer.isAvailableAsync().catch(() => false);
+      if (!isAvailable) {
+        setIsActive(false);
+        return;
+      }
+      Accelerometer.setUpdateInterval(ACCELEROMETER_INTERVAL);
+      subscription.current = Accelerometer.addListener(handleAccelerometer);
+      setIsActive(true);
+    } catch {
+      setIsActive(false);
+    }
   }, [handleAccelerometer, stopListening]);
 
   useEffect(() => {

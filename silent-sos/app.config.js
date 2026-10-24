@@ -40,7 +40,8 @@ export default {
     },
     plugins: [
       "expo-location",
-      "expo-av",
+      "expo-audio",
+      "expo-asset",
       "expo-status-bar",
       [
         "expo-splash-screen",

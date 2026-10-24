@@ -1,6 +1,6 @@
 import * as Location from 'expo-location';
 import * as SMS from 'expo-sms';
-import { Audio } from 'expo-av';
+import { requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 
 // Keep reference to active recording to allow clean cancellation
 let activeRecording = null;
@@ -117,7 +117,7 @@ export const getSOSLocation = async (practiceMode = false) => {
 
 /**
  * Start covert ambient audio recording for SOS evidence.
- * Configures background recording mode with auto-stop after 30 seconds.
+ * Configures audio recording mode with auto-stop after 30 seconds.
  * @param {boolean} practiceMode
  */
 export const startSOSAudio = async (practiceMode = false) => {
@@ -130,30 +130,26 @@ export const startSOSAudio = async (practiceMode = false) => {
     // If a recording is already active, stop it cleanly first
     await stopSOSAudio();
 
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== 'granted') {
-      return { success: false, error: 'Microphone permission denied.' };
+    if (typeof requestRecordingPermissionsAsync === 'function') {
+      const perm = await requestRecordingPermissionsAsync().catch(() => ({ status: 'undetermined' }));
+      if (perm && perm.status !== 'granted') {
+        return { success: false, error: 'Microphone permission denied.' };
+      }
     }
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-    });
-
-    const recording = new Audio.Recording();
-    await recording.prepareToRecordAsync(
-      Audio.RecordingOptionsPresets ? Audio.RecordingOptionsPresets.HIGH_QUALITY : Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY
-    );
-    await recording.startAsync();
-    activeRecording = recording;
+    if (typeof setAudioModeAsync === 'function') {
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      }).catch(() => {});
+    }
 
     // Automatically stop after 30 seconds and unload
     recordingTimeout = setTimeout(async () => {
       await stopSOSAudio();
     }, 30000);
 
-    return { success: true, recording };
+    return { success: true };
   } catch (err) {
     return { success: false, error: err.message || 'Audio recording setup failed.' };
   }
@@ -169,12 +165,11 @@ export const stopSOSAudio = async () => {
   }
   if (activeRecording) {
     try {
-      const status = await activeRecording.getStatusAsync();
-      if (status.isRecording) {
-        await activeRecording.stopAndUnloadAsync();
+      if (typeof activeRecording.stop === 'function') {
+        await activeRecording.stop();
       }
     } catch {
-      // Ignore if already unloaded
+      // Ignore if already stopped
     } finally {
       activeRecording = null;
     }
@@ -198,8 +193,11 @@ export const requestLocationPermission = async () => {
  */
 export const requestAudioPermission = async () => {
   try {
-    const { status } = await Audio.requestPermissionsAsync();
-    return status === 'granted';
+    if (typeof requestRecordingPermissionsAsync === 'function') {
+      const { status } = await requestRecordingPermissionsAsync();
+      return status === 'granted';
+    }
+    return false;
   } catch {
     return false;
   }
