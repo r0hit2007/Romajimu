@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, Animated, TouchableOpacity, Pressable,
-  StatusBar, Alert, Vibration, Dimensions
+  StatusBar, Vibration, Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useApp } from '../../context/AppContext';
+import { useShake } from '../../context/ShakeContext';
 import { Button } from '../../components/Button';
-import { Card, StatusDot, Divider } from '../../components/UIElements';
+import { Card, StatusDot } from '../../components/UIElements';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS, SHADOWS } from '../../constants/theme';
 import { sendSOSMessages, getSOSLocation, startSOSAudio } from '../../services/sosService';
 
@@ -16,12 +17,14 @@ const BUTTON_SIZE = Math.min(width * 0.65, 260);
 
 export default function HelpScreen() {
   const { settings, sosActive, setSosActive, sosStatus, setSosStatus, resetSosStatus } = useApp();
+  const { shakeStatus, manualTrigger } = useShake();
 
   const [phase, setPhase] = useState('idle'); // idle | countdown | sending | sent | cancelled
   const [countdown, setCountdown] = useState(settings.countdownDuration || 5);
   const [practiceMode, setPracticeMode] = useState(false);
   const [buttonHeld, setButtonHeld] = useState(false);
   const [accidentalMsg, setAccidentalMsg] = useState(false);
+  const [shakeTriggered, setShakeTriggered] = useState(false);
 
   // Animations
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -29,16 +32,34 @@ export default function HelpScreen() {
   const glowAnim = useRef(new Animated.Value(0)).current;
   const countdownOpacity = useRef(new Animated.Value(0)).current;
   const holdProgressAnim = useRef(new Animated.Value(0)).current;
+  const shakeRingAnim = useRef(new Animated.Value(0)).current;
+
   const holdTimeout = useRef(null);
   const countdownInterval = useRef(null);
   const pulseLoop = useRef(null);
 
-  // Idle pulse animation
+  // ── Track if shake brought us here ──────────────────────
+  useEffect(() => {
+    // If shake is in cooldown when we land here, it means shake triggered navigation
+    if (shakeStatus.inCooldown && phase === 'idle') {
+      setShakeTriggered(true);
+      // Animate the shake ring
+      Animated.sequence([
+        Animated.timing(shakeRingAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.delay(200),
+        Animated.timing(shakeRingAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+      ]).start();
+      // Auto-start the SOS countdown after a brief moment
+      setTimeout(() => {
+        if (phase === 'idle') startCountdown();
+      }, 800);
+    }
+  }, [shakeStatus.inCooldown]);
+
+  // Idle pulse
   useEffect(() => {
     startIdlePulse();
-    return () => {
-      if (pulseLoop.current) pulseLoop.current.stop();
-    };
+    return () => { if (pulseLoop.current) pulseLoop.current.stop(); };
   }, []);
 
   const startIdlePulse = () => {
@@ -56,35 +77,22 @@ export default function HelpScreen() {
     Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
   };
 
-  // ─── Hold to activate ────────────────────────────────────────
+  // ─── Hold to activate ────────────────────────────────────
 
   const onPressIn = () => {
     if (phase !== 'idle') return;
     setButtonHeld(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-
-    Animated.timing(holdProgressAnim, {
-      toValue: 1,
-      duration: 800,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished) {
-        startCountdown();
-      }
+    Animated.timing(holdProgressAnim, { toValue: 1, duration: 800, useNativeDriver: false }).start(({ finished }) => {
+      if (finished) startCountdown();
     });
-
-    Animated.spring(buttonScale, {
-      toValue: 0.92,
-      useNativeDriver: true,
-      tension: 200,
-    }).start();
+    Animated.spring(buttonScale, { toValue: 0.92, useNativeDriver: true, tension: 200 }).start();
   };
 
   const onPressOut = () => {
     if (!buttonHeld) return;
     setButtonHeld(false);
     if (phase === 'idle') {
-      // Released before countdown started
       holdProgressAnim.stopAnimation();
       Animated.timing(holdProgressAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
       Animated.spring(buttonScale, { toValue: 1, useNativeDriver: true }).start();
@@ -96,11 +104,9 @@ export default function HelpScreen() {
     stopIdlePulse();
     setPhase('countdown');
     setSosActive(true);
+    setShakeTriggered(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-
     Animated.timing(countdownOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-
-    // Glow pulse during countdown
     Animated.loop(
       Animated.sequence([
         Animated.timing(glowAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -110,7 +116,6 @@ export default function HelpScreen() {
 
     let c = settings.countdownDuration || 5;
     setCountdown(c);
-
     countdownInterval.current = setInterval(() => {
       c -= 1;
       setCountdown(c);
@@ -125,14 +130,13 @@ export default function HelpScreen() {
   const cancelSOS = () => {
     clearInterval(countdownInterval.current);
     holdProgressAnim.setValue(0);
-    glowAnim.stopAnimation();
-    glowAnim.setValue(0);
+    glowAnim.stopAnimation(); glowAnim.setValue(0);
     countdownOpacity.setValue(0);
     Animated.spring(buttonScale, { toValue: 1, useNativeDriver: true }).start();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
     setPhase('cancelled');
     setSosActive(false);
+    setShakeTriggered(false);
     setAccidentalMsg(true);
     startIdlePulse();
     setTimeout(() => {
@@ -155,14 +159,12 @@ export default function HelpScreen() {
     Vibration.vibrate([0, 200, 100, 200]);
 
     const pm = practiceMode;
-    const newStatus = { sms: 'pending', location: 'idle', audio: 'idle' };
-    setSosStatus({ ...newStatus });
+    setSosStatus({ sms: 'pending', location: 'idle', audio: 'idle' });
 
-    // Build message
     let message = settings.sosMessage || 'I need help. Please contact me.';
     if (settings.requestCallback) message += ' Please call me back.';
 
-    // 1. Get location
+    // 1. Location
     if (settings.includeLocation) {
       setSosStatus(s => ({ ...s, location: 'pending' }));
       const locResult = await getSOSLocation(pm);
@@ -174,12 +176,12 @@ export default function HelpScreen() {
       }
     }
 
-    // 2. Send SMS
+    // 2. SMS
     setSosStatus(s => ({ ...s, sms: 'pending' }));
     const smsResult = await sendSOSMessages(settings.contacts, message, pm);
     setSosStatus(s => ({ ...s, sms: smsResult.success ? 'sent' : 'failed' }));
 
-    // 3. Start audio
+    // 3. Audio
     if (settings.includeAudio) {
       setSosStatus(s => ({ ...s, audio: 'pending' }));
       const audioResult = await startSOSAudio(pm);
@@ -196,25 +198,32 @@ export default function HelpScreen() {
     countdownOpacity.setValue(0);
     glowAnim.setValue(0);
     setPhase('idle');
+    setShakeTriggered(false);
     setCountdown(settings.countdownDuration || 5);
     startIdlePulse();
   };
 
-  // ─── Render ────────────────────────────────────────────────
+  // ─── Derived animations ───────────────────────────────────
 
-  const holdProgress = holdProgressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  });
-
-  const glowOpacity = glowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.1, 0.7],
-  });
+  const holdProgress = holdProgressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.1, 0.7] });
+  const shakeRingOpacity = shakeRingAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 0.8] });
+  const shakeRingScale = shakeRingAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] });
 
   if (phase === 'sent') {
     return <SOSSentView sosStatus={sosStatus} practiceMode={practiceMode} onReset={resetAll} />;
   }
+
+  // Shake dot indicators (3 dots, fill as shakes accumulate)
+  const shakeDotRow = Array.from({ length: 3 }).map((_, i) => (
+    <View
+      key={i}
+      style={[
+        styles.shakeDot,
+        { backgroundColor: i < shakeStatus.shakesDetected ? COLORS.warning : COLORS.border }
+      ]}
+    />
+  ));
 
   return (
     <View style={styles.container}>
@@ -223,28 +232,53 @@ export default function HelpScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Safety</Text>
+        <View>
+          <Text style={styles.headerTitle}>Safety</Text>
+          {/* Shake status */}
+          {!shakeStatus.inCooldown ? (
+            <View style={styles.shakeStatusRow}>
+              <View style={styles.shakeDotRow}>{shakeDotRow}</View>
+              <Text style={styles.shakeStatusText}>
+                {shakeStatus.shakesDetected > 0
+                  ? `${shakeStatus.shakesDetected}/3 shakes detected`
+                  : 'Shake phone 3× for instant SOS'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.shakeStatusRow}>
+              <Text style={styles.cooldownText}>⏳ Shake cooldown (10s)</Text>
+            </View>
+          )}
+        </View>
+
         <TouchableOpacity
           style={[styles.practiceToggle, practiceMode && styles.practiceToggleActive]}
           onPress={() => setPracticeMode(!practiceMode)}
           accessibilityLabel={`${practiceMode ? 'Disable' : 'Enable'} practice mode`}
         >
           <Text style={[styles.practiceText, practiceMode && styles.practiceTextActive]}>
-            {practiceMode ? '🔵 Practice Mode' : '⚪ Practice Mode'}
+            {practiceMode ? '🔵 Practice' : '⚪ Practice'}
           </Text>
         </TouchableOpacity>
       </View>
 
-      {practiceMode && (
-        <View style={styles.practiceBanner}>
-          <Text style={styles.practiceBannerText}>
-            🔵  Practice Mode — No real alerts will be sent
+      {/* Shake-triggered banner */}
+      {shakeTriggered && (
+        <View style={styles.shakeTriggeredBanner}>
+          <Text style={styles.shakeTriggeredText}>
+            📳  Shake detected — confirm below or cancel
           </Text>
         </View>
       )}
 
+      {practiceMode && (
+        <View style={styles.practiceBanner}>
+          <Text style={styles.practiceBannerText}>🔵  Practice Mode — No real alerts will be sent</Text>
+        </View>
+      )}
+
       <View style={styles.body}>
-        {/* Countdown overlay */}
+        {/* Countdown display */}
         {phase === 'countdown' && (
           <Animated.View style={[styles.countdownContainer, { opacity: countdownOpacity }]}>
             <Text style={styles.countdownLabel}>Sending in</Text>
@@ -254,12 +288,15 @@ export default function HelpScreen() {
 
         {/* SOS Button */}
         <View style={styles.buttonArea}>
+          {/* Shake ring flash */}
+          <Animated.View style={[
+            styles.shakeRing,
+            { opacity: shakeRingOpacity, transform: [{ scale: shakeRingScale }] }
+          ]} />
+
           <Animated.View style={[
             styles.glowRing,
-            {
-              opacity: phase === 'countdown' ? glowOpacity : 0.15,
-              transform: [{ scale: pulseAnim }],
-            }
+            { opacity: phase === 'countdown' ? glowOpacity : 0.15, transform: [{ scale: pulseAnim }] }
           ]} />
 
           <Animated.View style={[styles.outerRing, { transform: [{ scale: buttonScale }] }]}>
@@ -282,7 +319,6 @@ export default function HelpScreen() {
                   <>
                     <Text style={styles.sosShieldIcon}>🛡</Text>
                     <Text style={styles.sosMainText}>Hold to ask{'\n'}for help</Text>
-                    {/* Hold progress bar */}
                     {buttonHeld && (
                       <View style={styles.holdProgress}>
                         <Animated.View style={[styles.holdProgressFill, { width: holdProgress }]} />
@@ -301,23 +337,11 @@ export default function HelpScreen() {
           </Animated.View>
         </View>
 
-        {/* Cancel / Send Now buttons */}
+        {/* Cancel / Send Now */}
         {phase === 'countdown' && (
           <View style={styles.actionRow}>
-            <Button
-              title="✕  Cancel"
-              onPress={cancelSOS}
-              variant="secondary"
-              size="lg"
-              style={styles.cancelBtn}
-            />
-            <Button
-              title="Send now"
-              onPress={sendNow}
-              variant="primary"
-              size="lg"
-              style={styles.sendNowBtn}
-            />
+            <Button title="✕  Cancel" onPress={cancelSOS} variant="secondary" size="lg" style={styles.flex1} />
+            <Button title="Send now" onPress={sendNow} variant="primary" size="lg" style={styles.flex1} />
           </View>
         )}
 
@@ -330,7 +354,7 @@ export default function HelpScreen() {
           </View>
         )}
 
-        {/* Status info */}
+        {/* Status info (idle) */}
         {phase === 'idle' && (
           <View style={styles.statusInfo}>
             <View style={styles.statusRow}>
@@ -345,15 +369,23 @@ export default function HelpScreen() {
             {settings.includeLocation && (
               <View style={styles.statusRow}>
                 <View style={[styles.statusDot, { backgroundColor: COLORS.primary }]} />
-                <Text style={styles.statusText}>Location enabled</Text>
+                <Text style={styles.statusText}>Location sharing enabled</Text>
               </View>
             )}
             {settings.includeAudio && (
               <View style={styles.statusRow}>
                 <View style={[styles.statusDot, { backgroundColor: COLORS.primary }]} />
-                <Text style={styles.statusText}>Audio recording enabled</Text>
+                <Text style={styles.statusText}>
+                  Audio recording enabled{' '}
+                  <Text style={styles.statusNote}>(OS will show indicator)</Text>
+                </Text>
               </View>
             )}
+            <View style={styles.honestNote}>
+              <Text style={styles.honestNoteText}>
+                ⚠️  Delivery depends on network and OS permissions. This app does not guarantee safety.
+              </Text>
+            </View>
           </View>
         )}
       </View>
@@ -365,7 +397,6 @@ export default function HelpScreen() {
 
 function SOSSentView({ sosStatus, practiceMode, onReset }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, []);
@@ -378,9 +409,7 @@ function SOSSentView({ sosStatus, practiceMode, onReset }) {
       <LinearGradient colors={[COLORS.bg0, COLORS.bg1]} style={StyleSheet.absoluteFillObject} />
       <Animated.View style={[styles.sentContainer, { opacity: fadeAnim }]}>
         <Text style={styles.sentIcon}>{practiceMode ? '🔵' : '✅'}</Text>
-        <Text style={styles.sentTitle}>
-          {practiceMode ? 'Practice complete' : 'Alert sent'}
-        </Text>
+        <Text style={styles.sentTitle}>{practiceMode ? 'Practice complete' : 'Alert sent'}</Text>
         <Text style={styles.sentSubtitle}>
           {practiceMode
             ? 'This was a simulation. No real messages were sent.'
@@ -389,7 +418,7 @@ function SOSSentView({ sosStatus, practiceMode, onReset }) {
 
         <Card style={styles.statusCard}>
           <Text style={styles.statusCardTitle}>Action Status</Text>
-          {['sms', 'location', 'audio'].map(action => (
+          {['sms', 'location', 'audio'].map(action =>
             sosStatus[action] !== 'idle' ? (
               <View key={action} style={styles.statusActionRow}>
                 <Text style={styles.statusActionName}>
@@ -400,7 +429,7 @@ function SOSSentView({ sosStatus, practiceMode, onReset }) {
                 </Text>
               </View>
             ) : null
-          ))}
+          )}
         </Card>
 
         {!practiceMode && (
@@ -428,7 +457,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: SPACING.xl,
     paddingTop: 56,
     paddingBottom: SPACING.base,
@@ -437,17 +466,31 @@ const styles = StyleSheet.create({
     fontSize: TYPOGRAPHY.size.xl,
     fontWeight: TYPOGRAPHY.weight.bold,
     color: COLORS.text,
+    marginBottom: 4,
   },
+  shakeStatusRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  shakeDotRow: { flexDirection: 'row', gap: 4 },
+  shakeDot: { width: 8, height: 8, borderRadius: 4 },
+  shakeStatusText: { fontSize: TYPOGRAPHY.size.xs, color: COLORS.textMuted },
+  cooldownText: { fontSize: TYPOGRAPHY.size.xs, color: COLORS.warning },
   practiceToggle: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    borderRadius: RADIUS.full,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border,
   },
   practiceToggleActive: { borderColor: COLORS.primary + '66', backgroundColor: COLORS.primaryGlow },
   practiceText: { fontSize: TYPOGRAPHY.size.xs, color: COLORS.textMuted, fontWeight: TYPOGRAPHY.weight.medium },
   practiceTextActive: { color: COLORS.primaryLight },
+  shakeTriggeredBanner: {
+    backgroundColor: COLORS.warningDim,
+    marginHorizontal: SPACING.xl,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.base,
+    marginBottom: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.warning + '44',
+  },
+  shakeTriggeredText: { color: COLORS.warningLight, fontSize: TYPOGRAPHY.size.sm, textAlign: 'center' },
   practiceBanner: {
     backgroundColor: COLORS.primaryGlow,
     marginHorizontal: SPACING.xl,
@@ -459,6 +502,14 @@ const styles = StyleSheet.create({
   practiceBannerText: { color: COLORS.primaryLight, fontSize: TYPOGRAPHY.size.sm, textAlign: 'center' },
   body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
   buttonArea: { alignItems: 'center', justifyContent: 'center', marginBottom: SPACING.xxl },
+  // Shake ring (flashes when shake triggers navigation to this screen)
+  shakeRing: {
+    position: 'absolute',
+    width: BUTTON_SIZE + 120,
+    height: BUTTON_SIZE + 120,
+    borderRadius: (BUTTON_SIZE + 120) / 2,
+    backgroundColor: COLORS.warning,
+  },
   glowRing: {
     position: 'absolute',
     width: BUTTON_SIZE + 80,
@@ -467,144 +518,89 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   outerRing: {
-    width: BUTTON_SIZE + 16,
-    height: BUTTON_SIZE + 16,
+    width: BUTTON_SIZE + 16, height: BUTTON_SIZE + 16,
     borderRadius: (BUTTON_SIZE + 16) / 2,
     backgroundColor: COLORS.bg3,
-    borderWidth: 2,
-    borderColor: COLORS.primary + '33',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 2, borderColor: COLORS.primary + '33',
+    alignItems: 'center', justifyContent: 'center',
     ...SHADOWS.sos,
   },
   sosButton: {
-    width: BUTTON_SIZE,
-    height: BUTTON_SIZE,
+    width: BUTTON_SIZE, height: BUTTON_SIZE,
     borderRadius: BUTTON_SIZE / 2,
     overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: COLORS.primary + '55',
+    borderWidth: 2, borderColor: COLORS.primary + '55',
   },
   sosGradient: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flex: 1, alignItems: 'center', justifyContent: 'center',
     borderRadius: BUTTON_SIZE / 2,
   },
   sosShieldIcon: { fontSize: 42, marginBottom: SPACING.sm },
   sosMainText: {
-    fontSize: TYPOGRAPHY.size.lg,
-    fontWeight: TYPOGRAPHY.weight.bold,
-    color: COLORS.text,
-    textAlign: 'center',
-    lineHeight: 26,
+    fontSize: TYPOGRAPHY.size.lg, fontWeight: TYPOGRAPHY.weight.bold,
+    color: COLORS.text, textAlign: 'center', lineHeight: 26,
   },
   sosCountdownText: {
-    fontSize: TYPOGRAPHY.size.xl,
-    fontWeight: TYPOGRAPHY.weight.bold,
-    color: COLORS.white,
-    textAlign: 'center',
-    lineHeight: 30,
+    fontSize: TYPOGRAPHY.size.xl, fontWeight: TYPOGRAPHY.weight.bold,
+    color: COLORS.white, textAlign: 'center', lineHeight: 30,
   },
   holdProgress: {
-    position: 'absolute',
-    bottom: 24,
-    left: 32,
-    right: 32,
-    height: 3,
-    backgroundColor: COLORS.border,
-    borderRadius: RADIUS.full,
-    overflow: 'hidden',
+    position: 'absolute', bottom: 24, left: 32, right: 32,
+    height: 3, backgroundColor: COLORS.border,
+    borderRadius: RADIUS.full, overflow: 'hidden',
   },
-  holdProgressFill: {
-    height: '100%',
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.full,
-  },
-  countdownContainer: {
-    position: 'absolute',
-    top: -60,
-    alignItems: 'center',
-  },
+  holdProgressFill: { height: '100%', backgroundColor: COLORS.primary, borderRadius: RADIUS.full },
+  countdownContainer: { position: 'absolute', top: -60, alignItems: 'center' },
   countdownLabel: {
-    fontSize: TYPOGRAPHY.size.sm,
-    color: COLORS.textSecondary,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    fontSize: TYPOGRAPHY.size.sm, color: COLORS.textSecondary,
+    letterSpacing: 1, textTransform: 'uppercase',
   },
   countdownNumber: {
-    fontSize: TYPOGRAPHY.size.display,
-    fontWeight: TYPOGRAPHY.weight.extrabold,
-    color: COLORS.primaryLight,
-    lineHeight: 56,
+    fontSize: 48, fontWeight: TYPOGRAPHY.weight.extrabold,
+    color: COLORS.primaryLight, lineHeight: 56,
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: SPACING.md,
-    marginTop: SPACING.base,
-  },
-  cancelBtn: { flex: 1 },
-  sendNowBtn: { flex: 1 },
+  actionRow: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.base },
+  flex1: { flex: 1 },
   accidentalBanner: {
-    backgroundColor: COLORS.safeDim,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.base,
-    borderWidth: 1,
-    borderColor: COLORS.safe + '44',
-    marginTop: SPACING.lg,
+    backgroundColor: COLORS.safeDim, borderRadius: RADIUS.lg,
+    padding: SPACING.base, borderWidth: 1, borderColor: COLORS.safe + '44', marginTop: SPACING.lg,
   },
   accidentalText: { color: COLORS.safeLight, fontSize: TYPOGRAPHY.size.sm, textAlign: 'center', lineHeight: 20 },
-  statusInfo: { marginTop: SPACING.xl, gap: SPACING.sm, alignItems: 'flex-start', width: '100%' },
+  statusInfo: { marginTop: SPACING.lg, gap: SPACING.sm, alignItems: 'flex-start', width: '100%' },
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: SPACING.sm },
   statusText: { color: COLORS.textSecondary, fontSize: TYPOGRAPHY.size.sm },
-  // Sent view
-  sentContainer: {
-    flex: 1,
-    paddingHorizontal: SPACING.xl,
-    paddingTop: 80,
-    alignItems: 'center',
+  statusNote: { color: COLORS.textMuted, fontStyle: 'italic' },
+  honestNote: {
+    backgroundColor: COLORS.bg3, borderRadius: RADIUS.md,
+    padding: SPACING.md, marginTop: SPACING.sm, width: '100%',
   },
+  honestNoteText: { color: COLORS.textMuted, fontSize: TYPOGRAPHY.size.xs, lineHeight: 18 },
+  // Sent view
+  sentContainer: { flex: 1, paddingHorizontal: SPACING.xl, paddingTop: 80, alignItems: 'center' },
   sentIcon: { fontSize: 72, marginBottom: SPACING.lg },
   sentTitle: {
-    fontSize: TYPOGRAPHY.size.xxl,
-    fontWeight: TYPOGRAPHY.weight.extrabold,
-    color: COLORS.text,
-    marginBottom: SPACING.md,
-    textAlign: 'center',
+    fontSize: TYPOGRAPHY.size.xxl, fontWeight: TYPOGRAPHY.weight.extrabold,
+    color: COLORS.text, marginBottom: SPACING.md, textAlign: 'center',
   },
   sentSubtitle: {
-    fontSize: TYPOGRAPHY.size.base,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: SPACING.xl,
+    fontSize: TYPOGRAPHY.size.base, color: COLORS.textSecondary,
+    textAlign: 'center', lineHeight: 22, marginBottom: SPACING.xl,
   },
   statusCard: { width: '100%', marginBottom: SPACING.base },
   statusCardTitle: {
-    fontSize: TYPOGRAPHY.size.sm,
-    fontWeight: TYPOGRAPHY.weight.semibold,
-    color: COLORS.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: SPACING.md,
+    fontSize: TYPOGRAPHY.size.sm, fontWeight: TYPOGRAPHY.weight.semibold,
+    color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: SPACING.md,
   },
   statusActionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    flexDirection: 'row', justifyContent: 'space-between',
+    paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   statusActionName: { fontSize: TYPOGRAPHY.size.base, color: COLORS.text },
   statusActionStatus: { fontSize: TYPOGRAPHY.size.base, fontWeight: TYPOGRAPHY.weight.semibold },
   emergencyNote: {
-    backgroundColor: COLORS.warningDim,
-    borderRadius: RADIUS.md,
-    padding: SPACING.base,
-    borderWidth: 1,
-    borderColor: COLORS.warning + '44',
-    width: '100%',
+    backgroundColor: COLORS.warningDim, borderRadius: RADIUS.md,
+    padding: SPACING.base, borderWidth: 1, borderColor: COLORS.warning + '44', width: '100%',
   },
   emergencyNoteText: { color: COLORS.warningLight, fontSize: TYPOGRAPHY.size.sm, textAlign: 'center', lineHeight: 20 },
 });

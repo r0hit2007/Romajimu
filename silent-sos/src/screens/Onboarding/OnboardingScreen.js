@@ -231,7 +231,7 @@ const WelcomeStep = () => (
     </Text>
     <Card style={styles.infoCard}>
       <Text style={styles.infoTitle}>What you'll configure:</Text>
-      {['✉️  SOS Message', '📞  Trusted Contacts', '📍  Location Sharing', '🧮  Calculator Decoy', '🌍  Support Region'].map(item => (
+      {['📳  Shake Trigger (shake 3× for instant SOS)', '✉️  SOS Message', '📞  Trusted Contacts', '📍  Location Sharing', '🧮  Calculator Decoy', '🌍  Support Region'].map(item => (
         <Text key={item} style={styles.infoItem}>{item}</Text>
       ))}
     </Card>
@@ -433,7 +433,7 @@ const DecoyStep = ({
       <Card style={[styles.infoCard, { marginTop: SPACING.base }]}>
         <Text style={styles.infoTitle}>🤫 Secret Return Gesture</Text>
         <Text style={styles.stepDesc}>
-          Long-press the <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>÷</Text> button for 2 seconds to return to the safety app.
+          Long-press the <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>C</Text> button for <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>3 seconds</Text> to reveal the safety app.{`\n\n`}Or simply shake the phone 3 times — the shake trigger works even from inside the calculator.
         </Text>
       </Card>
     )}
@@ -475,8 +475,20 @@ const ReviewStep = ({
       <Text style={styles.bigIcon}>✅</Text>
       <Text style={styles.stepTitle}>Your SOS Profile</Text>
       <Text style={styles.stepDesc}>
-        Here's what happens when you trigger SOS:
+        Here's exactly what happens when you trigger SOS:
       </Text>
+
+      {/* Shake highlight */}
+      <Card style={[styles.infoCard, { marginBottom: SPACING.base, borderColor: COLORS.primary + '55' }]}>
+        <Text style={styles.infoTitle}>📳 Shake Trigger (Always On)</Text>
+        <Text style={[styles.stepDesc, { textAlign: 'left', marginBottom: 4 }]}>
+          Shake the phone <Text style={{ color: COLORS.primaryLight, fontWeight: 'bold' }}>3× in 3 seconds</Text> → SOS screen opens instantly and begins the {countdownDuration}s countdown — works from any screen, including the Calculator Decoy.
+        </Text>
+        <Text style={[styles.stepDesc, { textAlign: 'left', marginBottom: 0, fontSize: 12, color: COLORS.textMuted }]}>
+          10-second cooldown prevents accidental re-triggers.
+        </Text>
+      </Card>
+
       <Card style={{ marginBottom: SPACING.base }}>
         <Text style={styles.reviewRow}>📨  Message sent to <Text style={styles.reviewValue}>{contactCount}</Text> contact{contactCount !== 1 ? 's' : ''}</Text>
         <Text style={styles.reviewRow}>✉️  Message: <Text style={styles.reviewValue}>"{sosMessage.substring(0, 50)}{sosMessage.length > 50 ? '...' : ''}"</Text></Text>
@@ -484,12 +496,12 @@ const ReviewStep = ({
         <Text style={styles.reviewRow}>📍  Location: <Text style={styles.reviewValue}>{includeLocation ? 'Will be included' : 'Not included'}</Text></Text>
         <Text style={styles.reviewRow}>🎤  Audio: <Text style={styles.reviewValue}>{includeAudio ? 'Will be recorded' : 'Not recorded'}</Text></Text>
         <Text style={styles.reviewRow}>📞  Callback: <Text style={styles.reviewValue}>{requestCallback ? 'Requested' : 'Not requested'}</Text></Text>
-        <Text style={styles.reviewRow}>🧮  Decoy: <Text style={styles.reviewValue}>{calculatorDecoyEnabled ? 'Enabled' : 'Disabled'}</Text></Text>
+        <Text style={styles.reviewRow}>🧮  Decoy: <Text style={styles.reviewValue}>{calculatorDecoyEnabled ? 'Enabled (hold C 3s to return)' : 'Disabled'}</Text></Text>
         <Text style={styles.reviewRow}>🌍  Region: <Text style={styles.reviewValue}>{region?.flag} {region?.label}</Text></Text>
       </Card>
       <View style={styles.warningCard}>
         <Text style={styles.warningText}>
-          ⚠️  We cannot guarantee message delivery in all circumstances. Always have a backup plan. In immediate danger, call emergency services directly.
+          ⚠️  Delivery depends on network and OS permissions. This app does not guarantee safety. In immediate danger, call emergency services directly.
         </Text>
       </View>
     </View>

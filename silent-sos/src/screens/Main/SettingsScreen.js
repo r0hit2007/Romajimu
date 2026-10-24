@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../../context/AppContext';
+import { useShake } from '../../context/ShakeContext';
 import { Button } from '../../components/Button';
 import { Input } from '../../components/Input';
 import { Card, SettingRow, SectionHeader, Divider } from '../../components/UIElements';
@@ -14,6 +15,7 @@ import { requestLocationPermission, requestAudioPermission } from '../../service
 
 export default function SettingsScreen() {
   const { settings, saveSettings, logout, deleteAccount } = useApp();
+  const { shakeStatus, isActive } = useShake();
   const [aiDrafting, setAiDrafting] = useState(false);
   const [aiMessage, setAiMessage] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -87,6 +89,37 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* Shake Trigger */}
+        <SectionHeader title="Shake Trigger" subtitle="Shake phone 3× in 3 seconds for instant SOS" />
+        <Card>
+          <View style={styles.shakeRow}>
+            <View style={styles.shakeLeft}>
+              <Text style={styles.shakeTitle}>📳  Shake Detection</Text>
+              <Text style={styles.shakeSubtitle}>
+                {isActive ? 'Active — monitoring for shakes' : 'Inactive'}
+              </Text>
+            </View>
+            <View style={[styles.shakeStatus, { backgroundColor: isActive ? COLORS.safeDim : COLORS.border }]}>
+              <Text style={[styles.shakeStatusText, { color: isActive ? COLORS.safeLight : COLORS.textMuted }]}>
+                {isActive ? 'ON' : 'OFF'}
+              </Text>
+            </View>
+          </View>
+          {shakeStatus.inCooldown && (
+            <View style={styles.cooldownNote}>
+              <Text style={styles.cooldownNoteText}>⏳  Shake cooldown active — resets in ~10 seconds</Text>
+            </View>
+          )}
+          <View style={styles.shakeInfo}>
+            <Text style={styles.shakeInfoText}>
+              • Threshold: 3 shakes within 3 seconds{`\n`}
+              • Works from any screen, including Calculator Decoy{`\n`}
+              • 10-second cooldown after each trigger{`\n`}
+              • Cannot be disabled (always-on safety feature)
+            </Text>
+          </View>
+        </Card>
 
         {/* SOS Message */}
         <SectionHeader title="SOS Message" />
@@ -187,7 +220,7 @@ export default function SettingsScreen() {
         {settings.calculatorDecoyEnabled && (
           <View style={styles.hintBox}>
             <Text style={styles.hintBoxText}>
-              💡 Return from calculator: long-press the <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>÷</Text> button for 2 seconds.
+              💡 Return from calculator: long-press the <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>C</Text> button for 3 seconds.{`\n`}Or shake the phone 3 times — that works too.
             </Text>
           </View>
         )}
@@ -312,6 +345,27 @@ const styles = StyleSheet.create({
   privacyNote: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
   privacyIcon: { fontSize: 20, marginTop: 2 },
   privacyText: { flex: 1, fontSize: TYPOGRAPHY.size.sm, color: COLORS.textSecondary, lineHeight: 20 },
+  // Shake section styles
+  shakeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.md },
+  shakeLeft: { flex: 1 },
+  shakeTitle: { fontSize: TYPOGRAPHY.size.base, fontWeight: TYPOGRAPHY.weight.semibold, color: COLORS.text },
+  shakeSubtitle: { fontSize: TYPOGRAPHY.size.sm, color: COLORS.textSecondary, marginTop: 2 },
+  shakeStatus: {
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.full, minWidth: 44, alignItems: 'center',
+  },
+  shakeStatusText: { fontSize: TYPOGRAPHY.size.sm, fontWeight: TYPOGRAPHY.weight.bold, letterSpacing: 0.5 },
+  shakeInfo: {
+    backgroundColor: COLORS.bg3, borderRadius: RADIUS.md,
+    padding: SPACING.md, marginTop: SPACING.sm,
+  },
+  shakeInfoText: { color: COLORS.textMuted, fontSize: TYPOGRAPHY.size.sm, lineHeight: 22 },
+  cooldownNote: {
+    backgroundColor: COLORS.warningDim, borderRadius: RADIUS.md,
+    padding: SPACING.sm, marginBottom: SPACING.sm,
+    borderWidth: 1, borderColor: COLORS.warning + '44',
+  },
+  cooldownNoteText: { color: COLORS.warningLight, fontSize: TYPOGRAPHY.size.sm },
   accountInfo: { paddingVertical: SPACING.sm },
   accountName: { fontSize: TYPOGRAPHY.size.lg, fontWeight: TYPOGRAPHY.weight.semibold, color: COLORS.text },
   accountEmail: { fontSize: TYPOGRAPHY.size.sm, color: COLORS.textSecondary, marginTop: 4 },
