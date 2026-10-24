@@ -10,11 +10,6 @@ export default {
     orientation: "portrait",
     icon: "./assets/icon.png",
     userInterfaceStyle: "dark",
-    splash: {
-      image: "./assets/splash-icon.png",
-      resizeMode: "contain",
-      backgroundColor: "#0A0C10",
-    },
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.silentsos.app",
@@ -43,7 +38,19 @@ export default {
     web: {
       favicon: "./assets/favicon.png",
     },
-    plugins: ["expo-location", "expo-av"],
+    plugins: [
+      "expo-location",
+      "expo-av",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/splash-icon.png",
+          resizeMode: "contain",
+          backgroundColor: "#0A0C10",
+        },
+      ],
+    ],
     // Extra values accessible via expo-constants inside the app
     extra: {
       HF_TOKEN: process.env.HF_TOKEN ?? null,
