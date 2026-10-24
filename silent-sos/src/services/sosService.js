@@ -1,52 +1,74 @@
 import * as Location from 'expo-location';
 import * as SMS from 'expo-sms';
-import * as Audio from 'expo-av';
+import { Audio } from 'expo-av';
+
+// Keep reference to active recording to allow clean cancellation
+let activeRecording = null;
+let recordingTimeout = null;
 
 /**
  * Attempt to send SMS to all SOS-selected contacts.
+ * Fault-tolerant with contact validation and sanitization.
  * @param {Array} contacts
  * @param {string} message
  * @param {boolean} practiceMode
  */
-export const sendSOSMessages = async (contacts, message, practiceMode = false) => {
-  const sosContacts = contacts.filter(c => c.selectedForSOS && c.phone);
-  
+export const sendSOSMessages = async (contacts = [], message = '', practiceMode = false) => {
+  const contactList = Array.isArray(contacts) ? contacts : [];
+  const sosContacts = contactList.filter(c => c && c.selectedForSOS && c.phone && String(c.phone).trim().length > 0);
+
   if (practiceMode) {
-    // Simulate a 1.5s delay in practice mode
-    await new Promise(r => setTimeout(r, 1500));
-    return { success: true, practice: true };
+    await new Promise(r => setTimeout(r, 1200));
+    return { success: true, practice: true, recipientCount: sosContacts.length };
   }
 
   if (sosContacts.length === 0) {
-    return { success: false, error: 'No SOS contacts with phone numbers configured.' };
+    return {
+      success: false,
+      error: 'No trusted emergency contacts configured with valid phone numbers.',
+      recipientCount: 0,
+    };
   }
 
   try {
-    const available = await SMS.isAvailableAsync();
-    if (!available) {
-      return { success: false, error: 'SMS is not available on this device.' };
+    const isAvailable = await SMS.isAvailableAsync();
+    if (!isAvailable) {
+      return {
+        success: false,
+        error: 'SMS service is not available on this device hardware.',
+        recipientCount: sosContacts.length,
+      };
     }
 
-    const phoneNumbers = sosContacts.map(c => c.phone);
+    // Clean and deduplicate phone numbers
+    const rawPhones = sosContacts.map(c => String(c.phone).trim().replace(/[\s()-]/g, ''));
+    const phoneNumbers = [...new Set(rawPhones)].filter(Boolean);
+
     const { result } = await SMS.sendSMSAsync(phoneNumbers, message);
-    return { success: result === 'sent', result };
+    return {
+      success: result === 'sent' || result === 'unknown', // on iOS unknown can mean handed over to system
+      result,
+      recipientCount: phoneNumbers.length,
+    };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: err.message || 'SMS transmission failed.' };
   }
 };
 
 /**
- * Get current location for the SOS alert.
+ * Get current GPS location for the SOS alert.
+ * Includes timeout race and cached position fallback to prevent hanging in low-signal areas.
  * @param {boolean} practiceMode
  */
 export const getSOSLocation = async (practiceMode = false) => {
   if (practiceMode) {
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 800));
     return {
       success: true,
       practice: true,
       coords: { latitude: 37.7749, longitude: -122.4194 },
       mapsLink: 'https://maps.google.com/?q=37.7749,-122.4194',
+      accuracy: 5,
     };
   }
 
@@ -55,30 +77,59 @@ export const getSOSLocation = async (practiceMode = false) => {
     if (status !== 'granted') {
       const { status: newStatus } = await Location.requestForegroundPermissionsAsync();
       if (newStatus !== 'granted') {
-        return { success: false, error: 'Location permission denied.' };
+        return { success: false, error: 'Location permission was denied.' };
       }
     }
 
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    const { latitude, longitude } = loc.coords;
+    // Race current high-accuracy position with a 6-second timeout
+    const locationPromise = Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Location request timed out')), 6000)
+    );
+
+    let loc;
+    try {
+      loc = await Promise.race([locationPromise, timeoutPromise]);
+    } catch {
+      // Fallback to last known position if real-time GPS takes too long
+      loc = await Location.getLastKnownPositionAsync();
+    }
+
+    if (!loc || !loc.coords) {
+      return { success: false, error: 'Could not obtain GPS fix.' };
+    }
+
+    const { latitude, longitude, accuracy } = loc.coords;
     const mapsLink = `https://maps.google.com/?q=${latitude},${longitude}`;
-    return { success: true, coords: { latitude, longitude }, mapsLink };
+    return {
+      success: true,
+      coords: { latitude, longitude },
+      accuracy: Math.round(accuracy || 10),
+      mapsLink,
+    };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: err.message || 'Failed to determine location.' };
   }
 };
 
 /**
- * Start audio recording for SOS evidence.
+ * Start covert ambient audio recording for SOS evidence.
+ * Configures background recording mode with auto-stop after 30 seconds.
  * @param {boolean} practiceMode
  */
 export const startSOSAudio = async (practiceMode = false) => {
   if (practiceMode) {
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 600));
     return { success: true, practice: true };
   }
 
   try {
+    // If a recording is already active, stop it cleanly first
+    await stopSOSAudio();
+
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') {
       return { success: false, error: 'Microphone permission denied.' };
@@ -87,25 +138,51 @@ export const startSOSAudio = async (practiceMode = false) => {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
     });
 
     const recording = new Audio.Recording();
-    await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    await recording.prepareToRecordAsync(
+      Audio.RecordingOptionsPresets ? Audio.RecordingOptionsPresets.HIGH_QUALITY : Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY
+    );
     await recording.startAsync();
-    
-    // Stop after 30 seconds automatically
-    setTimeout(async () => {
-      try { await recording.stopAndUnloadAsync(); } catch {}
+    activeRecording = recording;
+
+    // Automatically stop after 30 seconds and unload
+    recordingTimeout = setTimeout(async () => {
+      await stopSOSAudio();
     }, 30000);
 
     return { success: true, recording };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: err.message || 'Audio recording setup failed.' };
   }
 };
 
 /**
- * Request location permission proactively (for onboarding).
+ * Stop active SOS audio recording and release hardware resources.
+ */
+export const stopSOSAudio = async () => {
+  if (recordingTimeout) {
+    clearTimeout(recordingTimeout);
+    recordingTimeout = null;
+  }
+  if (activeRecording) {
+    try {
+      const status = await activeRecording.getStatusAsync();
+      if (status.isRecording) {
+        await activeRecording.stopAndUnloadAsync();
+      }
+    } catch {
+      // Ignore if already unloaded
+    } finally {
+      activeRecording = null;
+    }
+  }
+};
+
+/**
+ * Request location permission proactively (for onboarding or settings).
  */
 export const requestLocationPermission = async () => {
   try {
@@ -117,7 +194,7 @@ export const requestLocationPermission = async () => {
 };
 
 /**
- * Request microphone permission proactively (for onboarding).
+ * Request microphone permission proactively (for onboarding or settings).
  */
 export const requestAudioPermission = async () => {
   try {
