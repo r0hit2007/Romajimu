@@ -50,13 +50,22 @@ silent-sos/
 │   ├── components/
 │   │   ├── Button.js
 │   │   ├── Input.js
-│   │   └── UIElements.js
+│   │   └── UIElements.js           # SearchInput, Chips, Skeletons, EmptyState
+│   ├── hooks/
+│   │   ├── useContacts.js          # Full Contacts CRUD & search hook
+│   │   ├── useSupportResources.js  # Support resources & multi-tier cache hook
+│   │   ├── useAIDraft.js           # AI discreet distress prompt hook
+│   │   └── useDebounce.js          # Performance search debounce
 │   ├── services/
-│   │   ├── aiService.js            # Gemma AI via HuggingFace
+│   │   ├── aiService.js            # Gemma AI, prompt engineering, retry, offline templates
 │   │   └── sosService.js           # SMS, Location, Audio
+│   ├── utils/
+│   │   ├── contactValidation.js    # E.164 phone sanitization & duplicate checks
+│   │   ├── storageService.js       # Safe AsyncStorage with in-memory cache & TTL
+│   │   └── retry.js                # Exponential backoff retry with jitter
 │   └── constants/
 │       ├── theme.js                # Design tokens
-│       └── resources.js            # Fallback support data
+│       └── resources.js            # Verified crisis hotlines, SMS lines & portals
 ```
 
 ---
@@ -78,12 +87,17 @@ silent-sos/
 | Calculator Decoy | ✅ Fully working arithmetic |
 | Secret return gesture (long-press ÷) | ✅ |
 | Launch-into-decoy mode | ✅ |
-| Contacts CRUD | ✅ |
-| SOS contact toggle per contact | ✅ |
-| Support resources (fallback) | ✅ 5 regions, 6+ each |
-| AI support resources (Gemma) | ✅ Upgrades fallback |
-| AI SOS message drafting (Gemma) | ✅ In Settings |
-| Settings — all options editable | ✅ |
+| Contacts CRUD + Validation + Search | ✅ Full CRUD, E.164 phone sanitization, duplicate prevention, primary contact |
+| Contacts Modal & Categories | ✅ Relationship tags (Family, Friend, Partner, etc.), keyboard avoiding modal |
+| Emergency SOS contact toggle | ✅ Toggle per contact with haptic feedback & zero-SOS warning |
+| Support resources (multi-country) | ✅ 5 regions with direct calling, SMS crisis lines, website links |
+| Immediate Danger emergency dial | ✅ Direct 911 / 999 / 112 / 000 calling bar |
+| Quick Disguise escape hatch | ✅ Instant one-tap switch to calculator decoy |
+| AI support resources (Gemma) | ✅ Upgrades fallback with persistent multi-tier caching (Memory + Storage) |
+| AI SOS message drafting (Gemma) | ✅ Covert prompt engineering, scenario presets, strict 160-char SMS limit |
+| Offline Fallback Library | ✅ Pre-crafted discreet emergency message templates & verified local directory |
+| Retry & Error Handling | ✅ Exponential backoff with jitter on API / network error |
+| Custom Reusable Hooks | ✅ `useContacts`, `useSupportResources`, `useAIDraft`, `useDebounce` |
 | AsyncStorage persistence | ✅ |
 | Account deletion + data wipe | ✅ |
 | Dark theme design system | ✅ |

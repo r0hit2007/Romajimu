@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const STORAGE_KEY = '@silent_sos_settings';
+import { getItem, setItem, removeItem, STORAGE_KEYS } from '../utils/storageService';
 
 const defaultSettings = {
   // Auth
@@ -47,13 +45,12 @@ export const AppProvider = ({ children }) => {
 
   const loadSettings = async () => {
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setSettings(prev => ({ ...prev, ...parsed }));
+      const stored = await getItem(STORAGE_KEYS.SETTINGS, null);
+      if (stored && typeof stored === 'object') {
+        setSettings(prev => ({ ...prev, ...stored }));
       }
     } catch (e) {
-      console.warn('Failed to load settings:', e);
+      console.warn('[AppContext] Failed to load settings:', e);
     } finally {
       setIsLoading(false);
     }
@@ -63,10 +60,10 @@ export const AppProvider = ({ children }) => {
     try {
       const updated = { ...settings, ...updates };
       setSettings(updated);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      await setItem(STORAGE_KEYS.SETTINGS, updated);
       return true;
     } catch (e) {
-      console.warn('Failed to save settings:', e);
+      console.warn('[AppContext] Failed to save settings:', e);
       return false;
     }
   };
@@ -94,7 +91,7 @@ export const AppProvider = ({ children }) => {
 
   const deleteAccount = async () => {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEY);
+      await removeItem(STORAGE_KEYS.SETTINGS);
       setSettings(defaultSettings);
       return true;
     } catch {
@@ -103,25 +100,34 @@ export const AppProvider = ({ children }) => {
   };
 
   const addContact = async (contact) => {
-    const updated = [...settings.contacts, { ...contact, id: Date.now().toString() }];
+    const newId = contact.id || `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const currentList = Array.isArray(settings.contacts) ? settings.contacts : [];
+    const updated = [...currentList, { ...contact, id: newId, createdAt: contact.createdAt || Date.now() }];
     await saveSettings({ contacts: updated });
+    return newId;
   };
 
   const updateContact = async (id, updates) => {
-    const updated = settings.contacts.map(c => c.id === id ? { ...c, ...updates } : c);
+    const currentList = Array.isArray(settings.contacts) ? settings.contacts : [];
+    const updated = currentList.map(c => c.id === id ? { ...c, ...updates, updatedAt: Date.now() } : c);
     await saveSettings({ contacts: updated });
+    return updated;
   };
 
   const deleteContact = async (id) => {
-    const updated = settings.contacts.filter(c => c.id !== id);
+    const currentList = Array.isArray(settings.contacts) ? settings.contacts : [];
+    const updated = currentList.filter(c => c.id !== id);
     await saveSettings({ contacts: updated });
+    return updated;
   };
 
   const toggleContactSOS = async (id) => {
-    const updated = settings.contacts.map(c =>
-      c.id === id ? { ...c, selectedForSOS: !c.selectedForSOS } : c
+    const currentList = Array.isArray(settings.contacts) ? settings.contacts : [];
+    const updated = currentList.map(c =>
+      c.id === id ? { ...c, selectedForSOS: !c.selectedForSOS, updatedAt: Date.now() } : c
     );
     await saveSettings({ contacts: updated });
+    return updated;
   };
 
   const resetSosStatus = () => {
