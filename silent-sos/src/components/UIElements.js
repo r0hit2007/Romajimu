@@ -2,12 +2,72 @@ import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Switch, TextInput, TouchableOpacity, Animated } from 'react-native';
 import { COLORS, RADIUS, SPACING, TYPOGRAPHY, SHADOWS } from '../constants/theme';
 
-export const Card = ({ children, style, ...props }) => (
-  <View style={[styles.card, style]} {...props}>
-    {children}
-  </View>
-);
+/**
+ * Universal Card Component
+ *
+ * Provides a structured surface container with optional touch feedback,
+ * selection outline, and elevation variants.
+ *
+ * @param {Object} props
+ * @param {React.ReactNode} props.children
+ * @param {Object} [props.style]
+ * @param {Function} [props.onPress]
+ * @param {boolean} [props.selected=false]
+ * @param {'default' | 'highlight' | 'elevated'} [props.variant='default']
+ */
+export const Card = ({
+  children,
+  style,
+  onPress,
+  selected = false,
+  variant = 'default',
+  ...props
+}) => {
+  const variantStyle = {
+    default: styles.cardDefault,
+    highlight: styles.cardHighlight,
+    elevated: styles.cardElevated,
+  }[variant] || styles.cardDefault;
 
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.8}
+        style={[
+          styles.card,
+          variantStyle,
+          selected && styles.cardSelected,
+          style,
+        ]}
+        accessibilityRole="button"
+        {...props}
+      >
+        {children}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.card,
+        variantStyle,
+        selected && styles.cardSelected,
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </View>
+  );
+};
+
+/**
+ * SettingRow Component
+ *
+ * Configurable row item with icon, title, subtitle, and right-aligned control (toggle switch or custom).
+ */
 export const SettingRow = ({
   icon,
   title,
@@ -16,8 +76,9 @@ export const SettingRow = ({
   onValueChange,
   type = 'toggle', // toggle | info | navigate
   rightElement,
+  disabled = false,
 }) => (
-  <View style={styles.settingRow}>
+  <View style={[styles.settingRow, disabled && styles.settingDisabled]}>
     {icon && <Text style={styles.settingIcon}>{icon}</Text>}
     <View style={styles.settingText}>
       <Text style={styles.settingTitle}>{title}</Text>
@@ -27,18 +88,24 @@ export const SettingRow = ({
       <Switch
         value={value}
         onValueChange={onValueChange}
+        disabled={disabled}
         trackColor={{ false: COLORS.border, true: COLORS.primary }}
-        thumbColor={value ? COLORS.white : COLORS.textMuted}
+        thumbColor={value ? COLORS.white : COLORS.textSecondary}
         ios_backgroundColor={COLORS.border}
+        accessibilityRole="switch"
         accessibilityLabel={`Toggle ${title}`}
+        accessibilityState={{ checked: value, disabled }}
       />
     )}
     {rightElement && rightElement}
   </View>
 );
 
-export const SectionHeader = ({ title, subtitle, rightElement }) => (
-  <View style={styles.sectionHeaderRow}>
+/**
+ * SectionHeader Component
+ */
+export const SectionHeader = ({ title, subtitle, rightElement, style }) => (
+  <View style={[styles.sectionHeaderRow, style]}>
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
       {subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
@@ -47,18 +114,33 @@ export const SectionHeader = ({ title, subtitle, rightElement }) => (
   </View>
 );
 
-export const Badge = ({ label, color = COLORS.primary, icon, style }) => (
-  <View style={[styles.badge, { backgroundColor: color + '22', borderColor: color + '44' }, style]}>
+/**
+ * Badge Component
+ */
+export const Badge = ({ label, color = COLORS.primary, icon, style, textStyle }) => (
+  <View
+    style={[
+      styles.badge,
+      { backgroundColor: color + '22', borderColor: color + '55' },
+      style,
+    ]}
+  >
     {icon && <Text style={styles.badgeIcon}>{icon}</Text>}
-    <Text style={[styles.badgeText, { color }]}>{label}</Text>
+    <Text style={[styles.badgeText, { color }, textStyle]}>{label}</Text>
   </View>
 );
 
+/**
+ * Divider Component
+ */
 export const Divider = ({ style }) => (
   <View style={[styles.divider, style]} />
 );
 
-export const StatusDot = ({ status }) => {
+/**
+ * StatusDot Component
+ */
+export const StatusDot = ({ status = 'idle', size = 8 }) => {
   const colors = {
     idle: COLORS.textMuted,
     pending: COLORS.warning,
@@ -66,7 +148,18 @@ export const StatusDot = ({ status }) => {
     failed: COLORS.danger,
   };
   return (
-    <View style={[styles.statusDot, { backgroundColor: colors[status] || COLORS.textMuted }]} />
+    <View
+      style={[
+        styles.statusDot,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: colors[status] || COLORS.textMuted,
+        },
+      ]}
+      accessibilityLabel={`Status: ${status}`}
+    />
   );
 };
 
@@ -210,9 +303,25 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.xl,
     padding: SPACING.lg,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: COLORS.border,
     ...SHADOWS.sm,
+  },
+  cardDefault: {
+    backgroundColor: COLORS.surface,
+  },
+  cardHighlight: {
+    backgroundColor: COLORS.surfaceHighlight,
+    borderColor: COLORS.primary + '55',
+  },
+  cardElevated: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderColor: COLORS.borderLight,
+    ...SHADOWS.md,
+  },
+  cardSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryGlow,
   },
   settingRow: {
     flexDirection: 'row',
@@ -221,18 +330,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  settingDisabled: {
+    opacity: 0.5,
+  },
   settingIcon: {
-    fontSize: 20,
+    fontSize: 22,
     marginRight: SPACING.md,
-    width: 28,
+    width: 32,
     textAlign: 'center',
   },
   settingText: {
     flex: 1,
+    paddingRight: SPACING.sm,
   },
   settingTitle: {
     fontSize: TYPOGRAPHY.size.base,
-    fontWeight: TYPOGRAPHY.weight.medium,
+    fontWeight: TYPOGRAPHY.weight.semibold,
     color: COLORS.text,
   },
   settingSubtitle: {
@@ -253,8 +366,8 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: TYPOGRAPHY.size.xs,
-    fontWeight: TYPOGRAPHY.weight.semibold,
-    color: COLORS.textMuted,
+    fontWeight: TYPOGRAPHY.weight.bold,
+    color: COLORS.primaryLight,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
   },
@@ -266,10 +379,11 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: SPACING.sm,
+    paddingHorizontal: SPACING.sm + 2,
     paddingVertical: 3,
     borderRadius: RADIUS.full,
     borderWidth: 1,
+    alignSelf: 'flex-start',
     gap: 4,
   },
   badgeIcon: {
@@ -277,18 +391,15 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: TYPOGRAPHY.size.xs,
-    fontWeight: TYPOGRAPHY.weight.semibold,
-    letterSpacing: 0.3,
+    fontWeight: TYPOGRAPHY.weight.bold,
+    letterSpacing: 0.4,
   },
   divider: {
     height: 1,
     backgroundColor: COLORS.border,
-    marginVertical: SPACING.sm,
+    marginVertical: SPACING.md,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
     marginRight: SPACING.sm,
   },
   // Search

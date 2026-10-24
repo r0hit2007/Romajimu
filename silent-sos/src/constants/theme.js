@@ -1,6 +1,13 @@
-// Design Tokens — Silent SOS Theme
+/**
+ * Silent SOS — Design System Tokens & Dark Theme Constants
+ *
+ * Provides a unified color hierarchy, typography scale, spacing tokens,
+ * radius standards, elevation shadows, and animation configs for
+ * consistent, accessible dark-mode UI across the application.
+ */
+
 export const COLORS = {
-  // Background layers
+  // Background layers (deep obsidian dark theme)
   bg0: '#0A0C10',
   bg1: '#10141C',
   bg2: '#161B26',
@@ -10,8 +17,13 @@ export const COLORS = {
   // Surfaces / Cards
   surface: '#1A2030',
   surfaceHover: '#202840',
+  surfaceCard: '#151A24',
+  surfaceElevated: '#1D2436',
+  surfaceHighlight: '#222B3D',
   border: '#2A3448',
   borderLight: '#374059',
+  borderSubtle: '#1F2738',
+  borderFocus: '#4A90D9',
 
   // Primary accent — soft steel blue
   primary: '#4A90D9',
@@ -23,6 +35,7 @@ export const COLORS = {
   safe: '#38B2AC',
   safeLight: '#4ECDC4',
   safeDim: 'rgba(56, 178, 172, 0.12)',
+  safeGlow: 'rgba(78, 205, 196, 0.2)',
 
   // Warning — amber (non-alarming)
   warning: '#D4A843',
@@ -33,6 +46,13 @@ export const COLORS = {
   danger: '#C0544A',
   dangerLight: '#E06A60',
   dangerDim: 'rgba(192, 84, 74, 0.12)',
+  dangerGlow: 'rgba(224, 106, 96, 0.2)',
+
+  // Password strength meter indicators
+  strengthWeak: '#E06A60',
+  strengthFair: '#F0C060',
+  strengthGood: '#4A90D9',
+  strengthStrong: '#4ECDC4',
 
   // Text hierarchy
   text: '#E8EAF0',
@@ -45,6 +65,9 @@ export const COLORS = {
   sosMid: '#1E3560',
   sosEnd: '#0F1E40',
   sosGlow: 'rgba(74, 130, 220, 0.35)',
+
+  // Modal / backdrop overlay
+  overlay: 'rgba(10, 12, 16, 0.75)',
 
   // White utilities
   white: '#FFFFFF',
@@ -139,5 +162,19 @@ export const SHADOWS = {
     shadowOpacity: 0.6,
     shadowRadius: 30,
     elevation: 20,
+  },
+};
+
+export const ANIMATION = {
+  fast: 150,
+  normal: 250,
+  slow: 400,
+  spring: {
+    tension: 70,
+    friction: 9,
+  },
+  bouncy: {
+    tension: 100,
+    friction: 6,
   },
 };
